@@ -36,6 +36,7 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware import Middleware
 from .db_client import get_db_client, reset_db_connections, ResultSet, PerfAnalysisInput
 from .db_summary_manager import get_db_summary_manager
+from .http_security import SecurityConfig, AuthAndIPMiddleware
 from .connection_health_checker import (
     initialize_health_checker,
     start_connection_health_checker,
@@ -576,6 +577,7 @@ async def main():
     try:
         # Add CORS middleware for HTTP transports to allow web frontend access
         if args.mode in ['http', 'streamable-http', 'sse']:
+            security_config = SecurityConfig.from_env()
             cors_middleware = [
                 Middleware(
                     CORSMiddleware,
@@ -585,6 +587,14 @@ async def main():
                     allow_headers=["*"],  # Allow all headers
                 )
             ]
+            if security_config.enabled:
+                cors_middleware.insert(0, Middleware(AuthAndIPMiddleware, config=security_config))
+                logger.info(
+                    "HTTP security enabled for mode={} (sso_enabled={}, ip_filter_enabled={})",
+                    args.mode,
+                    security_config.sso_enabled,
+                    security_config.ip_filter_enabled,
+                )
             logger.info(f"CORS enabled for {args.mode} transport - allowing all origins")
             await mcp.run_async(
                 transport=args.mode, 

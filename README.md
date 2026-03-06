@@ -199,6 +199,32 @@ You can configure StarRocks connection using either individual environment varia
   - `streamable-http` (Streamable HTTP): Starts as a Streamable HTTP Server, supporting RESTful API calls.
   - `sse`: **(Deprecated, not recommended)** Starts in Server-Sent Events (SSE) streaming mode, suitable for scenarios requiring streaming responses. **Note: SSE mode is no longer maintained, it is recommended to use Streamable HTTP mode uniformly.**
 
+### HTTP Security Configuration (SSO + IP Allowlist)
+
+> These settings only affect HTTP-based transports: `http`, `streamable-http`, and `sse`.
+> `stdio` mode is not affected.
+
+- `MCP_IP_ALLOWLIST`: (Optional) Comma-separated list of allowed client IPs or CIDRs.  
+  Examples: `127.0.0.1,10.0.0.0/8,192.168.1.0/24`
+- `MCP_TRUST_PROXY_HEADERS`: (Optional) Whether to trust proxy headers when resolving client IP (`X-Forwarded-For` / `X-Real-IP`). Defaults to `false`.
+
+- `MCP_SSO_ENABLED`: (Optional) Enable JWT-based SSO authentication for HTTP requests. Defaults to `false`.
+- `MCP_SSO_JWKS_URL`: (Optional) JWKS endpoint used to verify JWT signatures (recommended for OIDC providers).
+- `MCP_SSO_JWT_SECRET`: (Optional) Shared secret for symmetric JWT verification (HS* algorithms).  
+  `MCP_SSO_JWKS_URL` or `MCP_SSO_JWT_SECRET` is required when `MCP_SSO_ENABLED=true`.
+- `MCP_SSO_JWT_ALGORITHMS`: (Optional) Comma-separated JWT algorithms.  
+  If omitted: defaults to `RS256` when using JWKS, otherwise `HS256`.
+- `MCP_SSO_ISSUER`: (Optional) Expected JWT issuer (`iss` claim).
+- `MCP_SSO_AUDIENCE`: (Optional) Expected JWT audience (`aud` claim).
+- `MCP_SSO_REQUIRED_SCOPES`: (Optional) Comma-separated required scopes.  
+  Scopes are read from `scope` or `scp` claims.
+
+When enabled, HTTP requests must include:
+
+```http
+Authorization: Bearer <JWT_TOKEN>
+```
+
 ## Components
 
 ### Tools
