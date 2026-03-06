@@ -206,6 +206,11 @@ You can configure StarRocks connection using either individual environment varia
 
 - `MCP_IP_ALLOWLIST`: (Optional) Comma-separated list of allowed client IPs or CIDRs.  
   Examples: `127.0.0.1,10.0.0.0/8,192.168.1.0/24`
+- `MCP_IP_ALLOWLIST_URL`: (Optional) HTTP endpoint to fetch IP allowlist dynamically.
+- `MCP_IP_ALLOWLIST_REFRESH_SECONDS`: (Optional) Refresh interval for `MCP_IP_ALLOWLIST_URL`. Defaults to `60`.
+- `MCP_IP_ALLOWLIST_HTTP_TIMEOUT_SECONDS`: (Optional) HTTP timeout (seconds) when fetching allowlist. Defaults to `3`.
+- `MCP_IP_ALLOWLIST_BEARER_TOKEN`: (Optional) Bearer token used when fetching allowlist from URL.
+- `MCP_IP_ALLOWLIST_FAIL_OPEN`: (Optional) If `true`, requests are allowed when remote allowlist fetch fails and no local allowlist is available. Defaults to `false`.
 - `MCP_TRUST_PROXY_HEADERS`: (Optional) Whether to trust proxy headers when resolving client IP (`X-Forwarded-For` / `X-Real-IP`). Defaults to `false`.
 
 - `MCP_SSO_ENABLED`: (Optional) Enable JWT-based SSO authentication for HTTP requests. Defaults to `false`.
@@ -224,6 +229,28 @@ When enabled, HTTP requests must include:
 ```http
 Authorization: Bearer <JWT_TOKEN>
 ```
+
+If `MCP_IP_ALLOWLIST_URL` is set, the server fetches allowlist entries from that endpoint and refreshes by interval.
+Supported response formats:
+
+1. JSON array:
+```json
+["10.0.0.0/8", "192.168.1.10"]
+```
+2. JSON object:
+```json
+{
+  "allowlist": ["10.0.0.0/8", "192.168.1.10"]
+}
+```
+3. Plain text (comma or newline separated):
+```text
+10.0.0.0/8,192.168.1.10
+```
+
+Behavior on fetch failure:
+- If a previous allowlist exists, it continues using the last-known allowlist.
+- If no allowlist is available and `MCP_IP_ALLOWLIST_FAIL_OPEN=false`, requests are rejected.
 
 ## Components
 

@@ -33,6 +33,22 @@ async def ok_endpoint(_request):
     return JSONResponse({"ok": True})
 
 
+class DummyHTTPResponse:
+    def __init__(self, body: str, status: int = 200, content_type: str = "application/json"):
+        self._body = body.encode("utf-8")
+        self.status = status
+        self.headers = {"Content-Type": content_type}
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
 class TestSecurityConfig:
     def test_default_config_disabled(self):
         with patch.dict(os.environ, {}, clear=True):
@@ -56,6 +72,24 @@ class TestSecurityConfig:
         with patch.dict(os.environ, {"MCP_SSO_ENABLED": "true"}, clear=True):
             with pytest.raises(ValueError, match="neither MCP_SSO_JWKS_URL nor MCP_SSO_JWT_SECRET"):
                 SecurityConfig.from_env()
+
+    def test_remote_allowlist_config(self):
+        with patch.dict(
+            os.environ,
+            {
+                "MCP_IP_ALLOWLIST_URL": "http://config-service.local/allowlist",
+                "MCP_IP_ALLOWLIST_REFRESH_SECONDS": "30",
+                "MCP_IP_ALLOWLIST_HTTP_TIMEOUT_SECONDS": "2.5",
+                "MCP_IP_ALLOWLIST_BEARER_TOKEN": "token",
+            },
+            clear=True,
+        ):
+            cfg = SecurityConfig.from_env()
+            assert cfg.ip_allowlist_url == "http://config-service.local/allowlist"
+            assert cfg.ip_allowlist_refresh_seconds == 30
+            assert cfg.ip_allowlist_http_timeout_seconds == 2.5
+            assert cfg.ip_allowlist_bearer_token == "token"
+            assert cfg.ip_filter_enabled is True
 
 
 class TestJWTValidator:
@@ -131,3 +165,68 @@ class TestAuthAndIPMiddleware:
         client = self._make_app(config)
         resp = client.options("/mcp")
         assert resp.status_code == 200
+
+    def test_remote_allowlist_via_http(self):
+        with patch.dict(
+            os.environ,
+            {
+                "MCP_IP_ALLOWLIST_URL": "http://config-service.local/allowlist",
+                "MCP_IP_ALLOWLIST_REFRESH_SECONDS": "60",
+                "MCP_TRUST_PROXY_HEADERS": "true",
+            },
+            clear=True,
+        ):
+            config = SecurityConfig.from_env()
+
+        with patch(
+            "src.mcp_server_starrocks.http_security.urllib.request.urlopen",
+            return_value=DummyHTTPResponse('{"allowlist": ["10.0.0.0/8"]}'),
+        ):
+            client = self._make_app(config)
+            denied = client.get("/mcp", headers={"X-Forwarded-For": "203.0.113.10"})
+            assert denied.status_code == 403
+
+            allowed = client.get("/mcp", headers={"X-Forwarded-For": "10.2.3.4"})
+            assert allowed.status_code == 200
+
+    def test_remote_allowlist_failure_uses_local_fallback(self):
+        with patch.dict(
+            os.environ,
+            {
+                "MCP_IP_ALLOWLIST": "10.0.0.0/8",
+                "MCP_IP_ALLOWLIST_URL": "http://config-service.local/allowlist",
+                "MCP_TRUST_PROXY_HEADERS": "true",
+            },
+            clear=True,
+        ):
+            config = SecurityConfig.from_env()
+
+        with patch(
+            "src.mcp_server_starrocks.http_security.urllib.request.urlopen",
+            side_effect=Exception("fetch failed"),
+        ):
+            client = self._make_app(config)
+            denied = client.get("/mcp", headers={"X-Forwarded-For": "203.0.113.10"})
+            assert denied.status_code == 403
+
+            allowed = client.get("/mcp", headers={"X-Forwarded-For": "10.2.3.4"})
+            assert allowed.status_code == 200
+
+    def test_remote_allowlist_failure_without_fallback_fails_fast(self):
+        with patch.dict(
+            os.environ,
+            {
+                "MCP_IP_ALLOWLIST_URL": "http://config-service.local/allowlist",
+                "MCP_IP_ALLOWLIST_FAIL_OPEN": "false",
+            },
+            clear=True,
+        ):
+            config = SecurityConfig.from_env()
+
+        with patch(
+            "src.mcp_server_starrocks.http_security.urllib.request.urlopen",
+            side_effect=Exception("fetch failed"),
+        ):
+            with pytest.raises(ValueError, match="Unable to fetch IP allowlist"):
+                client = self._make_app(config)
+                client.get("/mcp")
