@@ -14,7 +14,7 @@ The StarRocks MCP Server acts as a bridge between AI assistants and StarRocks da
 - **Database Exploration:** List databases and tables, retrieve table schemas (`starrocks://` resources).
 - **System Information:** Access internal StarRocks metrics and states via the `proc://` resource path.
 - **Detailed Overviews:** Get table overviews (`table_overview`) and intelligent database summaries (`db_summary`) including table sizes, replicas, and schema details.
-- **Data Visualization:** Execute a query and generate a Plotly chart directly from the results (`query_and_plotly_chart`).
+- **Data Visualization:** Execute a query and generate ECharts option JSON for UI rendering (`query_and_echarts_chart`, recommended). Plotly output is still available for compatibility (`query_and_plotly_chart`).
 - **Performance Analysis:** Collect query dump/profile/analyze profile for diagnosis (`collect_query_dump_and_profile`).
 - **HTTP Security:** Optional JWT SSO + IP allowlist controls for HTTP-based transports.
 - **Intelligent Caching:** Table and database overviews are cached in memory to speed up repeated requests. Cache can be bypassed when needed.
@@ -339,9 +339,30 @@ Request authorization order for HTTP transports:
     ```
   - **Output:** `ToolResult` with a short status text and structured diagnostic payload (`query_dump`, `profile`, `analyze_profile`, `query_id`, `duration`, etc.).
 
+- `query_and_echarts_chart` (recommended)
+
+  - **Description:** Executes a SQL query and generates ECharts option JSON for front-end rendering.
+  - **Input:**
+    ```json
+    {
+      "query": "SQL query to fetch data",
+      "chart_type": "auto|line|bar|scatter|pie (optional, default: auto)",
+      "x_field": "optional x-axis field",
+      "y_fields": "optional comma-separated y fields",
+      "series_field": "optional field to split series",
+      "title": "optional chart title",
+      "max_points": 2000,
+      "db": "database name (optional, uses default database if not specified)"
+    }
+    ```
+  - **Output:** `ToolResult` with:
+    - `structured_content.renderer = "echarts"`
+    - `structured_content.echarts_option` (ECharts option JSON)
+    - `structured_content.echarts_meta` (resolved fields and truncation metadata)
+
 - `query_and_plotly_chart`
 
-  - **Description:** Executes a SQL query, loads the results into a Pandas DataFrame, and generates a Plotly chart using a provided Python expression. Designed for visualization in supporting UIs.
+  - **Description:** Executes a SQL query, loads the results into a Pandas DataFrame, and generates a Plotly chart using a provided Python expression. This tool is kept for backward compatibility; prefer `query_and_echarts_chart` for new integrations.
   - **Input:**
     ```json
     {

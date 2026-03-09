@@ -36,6 +36,7 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware import Middleware
 from .db_client import get_db_client, reset_db_connections, ResultSet, PerfAnalysisInput
 from .db_summary_manager import get_db_summary_manager
+from .echarts_builder import build_echarts_option
 from .http_security import SecurityConfig, AuthAndIPMiddleware
 from .connection_health_checker import (
     initialize_health_checker,
@@ -401,6 +402,95 @@ def query_and_plotly_chart(
         return ToolResult(
             content=[TextContent(type='text', text=f'Error: {err}')],
             structured_content={'success': False, 'error_message': str(err)},
+        )
+
+
+@mcp.tool(description="Run SQL and generate ECharts option JSON for UI rendering" + description_suffix)
+def query_and_echarts_chart(
+        query: Annotated[str, Field(description="SQL query to execute")],
+        chart_type: Annotated[
+            str, Field(description="Chart type: auto|line|bar|scatter|pie")] = "auto",
+        x_field: Annotated[
+            str|None, Field(description="X-axis field (optional, auto inferred when omitted)")] = None,
+        y_fields: Annotated[
+            str|None, Field(description="Comma-separated Y fields (optional, auto inferred when omitted)")] = None,
+        series_field: Annotated[
+            str|None, Field(description="Optional field used to split series by category")] = None,
+        title: Annotated[
+            str|None, Field(description="Optional chart title")] = None,
+        max_points: Annotated[
+            int, Field(description="Maximum rows rendered into chart option to control payload size")] = 2000,
+        db: Annotated[str|None, Field(description="database")] = None
+) -> ToolResult:
+    try:
+        logger.info(
+            "query_and_echarts_chart query:{} chart_type:{} x_field:{} y_fields:{} series_field:{} max_points:{} db:{}",
+            one_line_summary(query),
+            chart_type,
+            x_field,
+            y_fields,
+            series_field,
+            max_points,
+            db,
+        )
+        result = db_client.execute(query, db=db, return_format="pandas")
+        errmsg = None
+        if not result.success:
+            errmsg = result.error_message
+        elif result.pandas is None:
+            errmsg = "Query did not return data suitable for charting."
+        else:
+            df = result.pandas
+            if df.empty:
+                errmsg = "Query returned no data to chart."
+        if errmsg:
+            logger.warning(f"Query or data issue: {errmsg}")
+            return ToolResult(
+                content=[TextContent(type='text', text=f"Error: {errmsg}")],
+                structured_content={"success": False, "error_message": errmsg},
+            )
+
+        chart_result = build_echarts_option(
+            df=df,
+            chart_type=chart_type,
+            x_field=x_field,
+            y_fields=y_fields,
+            series_field=series_field,
+            title=title,
+            max_points=max_points,
+        )
+
+        structured_content = result.to_dict()
+        structured_content["renderer"] = "echarts"
+        structured_content["echarts_option"] = chart_result.option
+        structured_content["echarts_meta"] = chart_result.to_meta()
+
+        summary = result.to_string(limit=6000)
+        extra = ""
+        if chart_result.truncated:
+            extra = (
+                f"\nChart data truncated to {chart_result.rendered_row_count} rows "
+                f"(original {chart_result.row_count})."
+            )
+        return ToolResult(
+            content=[
+                TextContent(
+                    type="text",
+                    text=(
+                        f"{summary}\n"
+                        f"ECharts option generated. chart_type={chart_result.chart_type}, "
+                        f"x_field={chart_result.x_field}, y_fields={','.join(chart_result.y_fields)}"
+                        f"{extra}"
+                    ),
+                ),
+            ],
+            structured_content=structured_content,
+        )
+    except Exception as err:
+        logger.warning(f"Failed to generate ECharts option: {err}")
+        return ToolResult(
+            content=[TextContent(type='text', text=f"Error: {err}")],
+            structured_content={"success": False, "error_message": str(err)},
         )
 
 
