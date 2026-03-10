@@ -55,7 +55,12 @@ class ResultSet:
         """Format rows as CSV-like string with column names as first row."""
         if not self.success:
             return f"Error: {self.error_message}"
+        execution_time_text = (
+            f"{self.execution_time:.3f}s" if self.execution_time is not None else "unknown"
+        )
         if self.column_names is None or self.rows is None:
+            if self.rows_affected is not None:
+                return f"Rows affected: {self.rows_affected}\nExecution time: {execution_time_text}\n"
             return "No data"
         def to_csv_line(row):
             return ",".join(
@@ -69,7 +74,7 @@ class ResultSet:
                 break
             output.write(line)
         output.write(f"Total rows: {len(self.rows)}\n")
-        output.write(f"Execution time: {self.execution_time:.3f}s\n");
+        output.write(f"Execution time: {execution_time_text}\n")
         return output.getvalue()
 
     def to_dict(self) -> dict:
@@ -448,6 +453,7 @@ class DBClient:
                 pandas=pandas_df
             )
         conn = None
+        start_time = time.time()
         try:
             conn = self._get_connection()
             # Switch database if specified
@@ -460,7 +466,7 @@ class DBClient:
                     return ResultSet(
                         success=False,
                         error_message=f"Error switching to database '{db}': {str(db_err)}",
-                        execution_time=0
+                        execution_time=time.time() - start_time
                     )
                 cursor_temp.close()
             return self._execute(conn, statement, None, return_format)
@@ -469,11 +475,13 @@ class DBClient:
             return ResultSet(
                 success=False,
                 error_message=f"Error executing statement '{statement}': {str(e)}",
+                execution_time=time.time() - start_time,
             )
         except Exception as e:
             return ResultSet(
                 success=False,
                 error_message=f"Unexpected error executing statement '{statement}': {str(e)}",
+                execution_time=time.time() - start_time,
             )
         finally:
             if conn and not self.enable_arrow_flight_sql:

@@ -29,6 +29,13 @@ from src.mcp_server_starrocks.db_client import (
 )
 
 
+def _require_live_connection(client: DBClient) -> DBClient:
+    result = client.execute("SHOW DATABASES")
+    if not result.success:
+        pytest.skip(f"StarRocks not available on localhost:9030: {result.error_message}")
+    return client
+
+
 class TestDBClient:
     """Test cases for DBClient class."""
     
@@ -38,6 +45,11 @@ class TestDBClient:
         # Reset global state
         reset_db_connections()
         return DBClient()
+
+    @pytest.fixture
+    def live_db_client(self, db_client):
+        """Create a DBClient only when a live StarRocks instance is reachable."""
+        return _require_live_connection(db_client)
     
     def test_client_initialization(self, db_client):
         """Test DBClient initialization with default settings."""
@@ -52,9 +64,9 @@ class TestDBClient:
         client2 = get_db_client()
         assert client1 is client2
     
-    def test_execute_show_databases(self, db_client):
+    def test_execute_show_databases(self, live_db_client):
         """Test executing SHOW DATABASES query."""
-        result = db_client.execute("SHOW DATABASES")
+        result = live_db_client.execute("SHOW DATABASES")
         
         assert isinstance(result, ResultSet)
         assert result.success is True
@@ -69,9 +81,9 @@ class TestDBClient:
         database_names = [row[0] for row in result.rows]
         assert 'information_schema' in database_names
     
-    def test_execute_show_databases_pandas(self, db_client):
+    def test_execute_show_databases_pandas(self, live_db_client):
         """Test executing SHOW DATABASES with pandas return format."""
-        result = db_client.execute("SHOW DATABASES", return_format="pandas")
+        result = live_db_client.execute("SHOW DATABASES", return_format="pandas")
         
         assert isinstance(result, ResultSet)
         assert result.success is True
@@ -84,9 +96,9 @@ class TestDBClient:
         df = result.to_pandas()
         assert df is result.pandas
     
-    def test_execute_invalid_query(self, db_client):
+    def test_execute_invalid_query(self, live_db_client):
         """Test executing an invalid SQL query."""
-        result = db_client.execute("SELECT * FROM nonexistent_table_12345")
+        result = live_db_client.execute("SELECT * FROM nonexistent_table_12345")
         
         assert isinstance(result, ResultSet)
         assert result.success is False
@@ -94,36 +106,36 @@ class TestDBClient:
         assert "nonexistent_table_12345" in result.error_message or "doesn't exist" in result.error_message.lower()
         assert result.execution_time is not None
     
-    def test_execute_create_and_drop_database(self, db_client):
+    def test_execute_create_and_drop_database(self, live_db_client):
         """Test creating and dropping a test database."""
         test_db_name = "test_mcp_db_client"
         
         # Clean up first (in case previous test failed)
-        db_client.execute(f"DROP DATABASE IF EXISTS {test_db_name}")
+        live_db_client.execute(f"DROP DATABASE IF EXISTS {test_db_name}")
         
         # Create database
-        create_result = db_client.execute(f"CREATE DATABASE {test_db_name}")
+        create_result = live_db_client.execute(f"CREATE DATABASE {test_db_name}")
         assert create_result.success is True
         assert create_result.rows_affected is not None  # DDL returns row count (usually 0)
         
         # Verify database exists
-        show_result = db_client.execute("SHOW DATABASES")
+        show_result = live_db_client.execute("SHOW DATABASES")
         database_names = [row[0] for row in show_result.rows]
         assert test_db_name in database_names
         
         # Drop database
-        drop_result = db_client.execute(f"DROP DATABASE {test_db_name}")
+        drop_result = live_db_client.execute(f"DROP DATABASE {test_db_name}")
         assert drop_result.success is True
         
         # Verify database is gone
-        show_result = db_client.execute("SHOW DATABASES")
+        show_result = live_db_client.execute("SHOW DATABASES")
         database_names = [row[0] for row in show_result.rows]
         assert test_db_name not in database_names
     
-    def test_execute_with_specific_database(self, db_client):
+    def test_execute_with_specific_database(self, live_db_client):
         """Test executing query with specific database context."""
         # Use information_schema which should always be available
-        result = db_client.execute("SHOW TABLES", db="information_schema")
+        result = live_db_client.execute("SHOW TABLES", db="information_schema")
         
         assert result.success is True
         assert result.column_names is not None
@@ -136,22 +148,22 @@ class TestDBClient:
         found_expected = any(table in table_names for table in expected_tables)
         assert found_expected, f"Expected at least one of {expected_tables} in {table_names}"
     
-    def test_execute_with_invalid_database(self, db_client):
+    def test_execute_with_invalid_database(self, live_db_client):
         """Test executing query with non-existent database."""
-        result = db_client.execute("SHOW TABLES", db="nonexistent_db_12345")
+        result = live_db_client.execute("SHOW TABLES", db="nonexistent_db_12345")
         
         assert result.success is False
         assert result.error_message is not None
         assert "nonexistent_db_12345" in result.error_message
     
-    def test_execute_table_operations(self, db_client):
+    def test_execute_table_operations(self, live_db_client):
         """Test creating, inserting, querying, and dropping a table."""
         test_db = "test_mcp_table_ops"
         test_table = "test_table"
         
         try:
             # Create database
-            create_db_result = db_client.execute(f"CREATE DATABASE IF NOT EXISTS {test_db}")
+            create_db_result = live_db_client.execute(f"CREATE DATABASE IF NOT EXISTS {test_db}")
             assert create_db_result.success is True
             
             # Create table (with replication_num=1 for single-node setup)
@@ -163,7 +175,7 @@ class TestDBClient:
             )
             PROPERTIES ("replication_num" = "1")
             """
-            create_result = db_client.execute(create_table_sql)
+            create_result = live_db_client.execute(create_table_sql)
             assert create_result.success is True
             
             # Insert data
@@ -173,12 +185,12 @@ class TestDBClient:
             (2, 'test2', 2.5),
             (3, 'test3', 3.5)
             """
-            insert_result = db_client.execute(insert_sql)
+            insert_result = live_db_client.execute(insert_sql)
             assert insert_result.success is True
             assert insert_result.rows_affected == 3
             
             # Query data
-            select_result = db_client.execute(f"SELECT * FROM {test_db}.{test_table} ORDER BY id")
+            select_result = live_db_client.execute(f"SELECT * FROM {test_db}.{test_table} ORDER BY id")
             assert select_result.success is True
             assert len(select_result.column_names) == 3
             assert select_result.column_names == ['id', 'name', 'value']
@@ -189,27 +201,27 @@ class TestDBClient:
             assert list(select_result.rows[2]) == [3, 'test3', 3.5]
             
             # Test COUNT query
-            count_result = db_client.execute(f"SELECT COUNT(*) as cnt FROM {test_db}.{test_table}")
+            count_result = live_db_client.execute(f"SELECT COUNT(*) as cnt FROM {test_db}.{test_table}")
             assert count_result.success is True
             assert count_result.rows[0][0] == 3
             
             # Test with specific database context
-            ctx_result = db_client.execute(f"SELECT * FROM {test_table}", db=test_db)
+            ctx_result = live_db_client.execute(f"SELECT * FROM {test_table}", db=test_db)
             assert ctx_result.success is True
             assert len(ctx_result.rows) == 3
             
         finally:
             # Clean up
-            db_client.execute(f"DROP DATABASE IF EXISTS {test_db}")
+            live_db_client.execute(f"DROP DATABASE IF EXISTS {test_db}")
     
-    def test_execute_pandas_format_with_data(self, db_client):
+    def test_execute_pandas_format_with_data(self, live_db_client):
         """Test pandas format with actual data."""
         test_db = "test_mcp_pandas"
         
         try:
             # Setup test data
-            db_client.execute(f"CREATE DATABASE IF NOT EXISTS {test_db}")
-            db_client.execute(f"""
+            live_db_client.execute(f"CREATE DATABASE IF NOT EXISTS {test_db}")
+            live_db_client.execute(f"""
                 CREATE TABLE {test_db}.pandas_test (
                     id INT,
                     category STRING,
@@ -217,7 +229,7 @@ class TestDBClient:
                 )
                 PROPERTIES ("replication_num" = "1")
             """)
-            db_client.execute(f"""
+            live_db_client.execute(f"""
                 INSERT INTO {test_db}.pandas_test VALUES 
                 (1, 'A', 100.50),
                 (2, 'B', 200.75),
@@ -225,7 +237,7 @@ class TestDBClient:
             """)
             
             # Test executing query with pandas format
-            result = db_client.execute(f"SELECT * FROM {test_db}.pandas_test ORDER BY id", return_format="pandas")
+            result = live_db_client.execute(f"SELECT * FROM {test_db}.pandas_test ORDER BY id", return_format="pandas")
             
             assert isinstance(result, ResultSet)
             assert result.success is True
@@ -242,7 +254,7 @@ class TestDBClient:
             assert df is result.pandas
         
         finally:
-            db_client.execute(f"DROP DATABASE IF EXISTS {test_db}")
+            live_db_client.execute(f"DROP DATABASE IF EXISTS {test_db}")
     
     def test_connection_error_handling(self, db_client):
         """Test error handling when connection fails."""
@@ -254,30 +266,30 @@ class TestDBClient:
             assert "Connection failed" in result.error_message
             assert result.execution_time is not None
     
-    def test_reset_connections(self, db_client):
+    def test_reset_connections(self, live_db_client):
         """Test connection reset functionality."""
         # First execute a query to establish connection
-        result1 = db_client.execute("SHOW DATABASES")
+        result1 = live_db_client.execute("SHOW DATABASES")
         assert result1.success is True
         
         # Reset connections
-        db_client.reset_connections()
+        live_db_client.reset_connections()
         
         # Should still work after reset
-        result2 = db_client.execute("SHOW DATABASES")
+        result2 = live_db_client.execute("SHOW DATABASES")
         assert result2.success is True
     
-    def test_describe_table(self, db_client):
+    def test_describe_table(self, live_db_client):
         """Test DESCRIBE table functionality."""
         test_db = "test_mcp_describe"
         test_table = "describe_test"
         
         try:
             # Create test table
-            db_result = db_client.execute(f"CREATE DATABASE IF NOT EXISTS {test_db}")
+            db_result = live_db_client.execute(f"CREATE DATABASE IF NOT EXISTS {test_db}")
             assert db_result.success, f"Failed to create database: {db_result.error_message}"
             
-            table_result = db_client.execute(f"""
+            table_result = live_db_client.execute(f"""
                 CREATE TABLE {test_db}.{test_table} (
                     id BIGINT NOT NULL COMMENT 'Primary key',
                     name VARCHAR(100) COMMENT 'Name field',
@@ -289,13 +301,13 @@ class TestDBClient:
             assert table_result.success, f"Failed to create table: {table_result.error_message}"
             
             # Verify table exists first
-            show_result = db_client.execute(f"SHOW TABLES", db=test_db)
+            show_result = live_db_client.execute(f"SHOW TABLES", db=test_db)
             assert show_result.success, f"Failed to show tables: {show_result.error_message}"
             table_names = [row[0] for row in show_result.rows]
             assert test_table in table_names, f"Table {test_table} not found in {table_names}"
             
             # Describe table (use full table name for clarity)
-            result = db_client.execute(f"DESCRIBE {test_db}.{test_table}")
+            result = live_db_client.execute(f"DESCRIBE {test_db}.{test_table}")
             
             assert result.success is True
             assert result.column_names is not None
@@ -314,7 +326,7 @@ class TestDBClient:
             assert 'is_active' in field_names
         
         finally:
-            db_client.execute(f"DROP DATABASE IF EXISTS {test_db}")
+            live_db_client.execute(f"DROP DATABASE IF EXISTS {test_db}")
 
 
 class TestDBClientWithArrowFlight:
@@ -526,6 +538,8 @@ class TestResultSet:
             'id,name,value',
             '1,test1,10.5',
             '2,test2,20.5',
+            'Total rows: 2',
+            'Execution time: 0.100s',
             ''
         ]
         assert string_output == '\n'.join(expected_lines)
@@ -543,8 +557,9 @@ class TestResultSet:
         string_output = result.to_string(limit=20)
         lines = string_output.split('\n')
         assert lines[0] == 'id,name'  # Header should always be included
-        # Should stop before all rows due to limit
-        assert len(lines) < 4  # Should be less than header + 2 rows + empty line
+        assert '...' in lines  # Output should be truncated
+        assert 'Total rows: 2' in lines
+        assert 'Execution time: 0.100s' in lines
     
     def test_result_set_to_string_error_cases(self):
         """Test ResultSet to_string error handling."""
@@ -617,6 +632,7 @@ class TestResultSet:
         assert result.column_names is None
         assert result.rows is None
         assert result.error_message is None
+        assert result.to_string() == "Rows affected: 5\nExecution time: 0.200s\n"
 
 
 class TestParseConnectionUrl:
@@ -1044,8 +1060,10 @@ class TestDummyMode:
             expected_lines = [
                 'name',
                 'aaa',
-                'bbb', 
+                'bbb',
                 'ccc',
+                'Total rows: 3',
+                'Execution time: 0.100s',
                 ''
             ]
             assert string_output == '\n'.join(expected_lines)

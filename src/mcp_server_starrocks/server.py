@@ -461,6 +461,8 @@ def query_and_echarts_chart(
         )
 
         structured_content = result.to_dict()
+        if chart_result.truncated and structured_content.get("rows") is not None:
+            structured_content["rows"] = structured_content["rows"][:chart_result.rendered_row_count]
         structured_content["renderer"] = "echarts"
         structured_content["echarts_option"] = chart_result.option
         structured_content["echarts_meta"] = chart_result.to_meta()
